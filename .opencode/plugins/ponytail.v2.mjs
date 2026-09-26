@@ -46,34 +46,10 @@ export default {
       log('transform-after.json', { after });
     });
 
-    // Capture the real system prompt by wrapping the provider's model call.
-    await ctx.aisdk.language((event) => {
-      const model = event.language;
-      if (!model || model.__ponytailProbe) return;
-      try {
-        model.__ponytailProbe = true;
-        for (const method of ['doStream', 'doGenerate']) {
-          const original = model[method];
-          if (typeof original !== 'function') continue;
-          model[method] = function (opts) {
-            try {
-              const prompt = opts && opts.prompt;
-              const text = JSON.stringify(prompt);
-              log('system-prompt.json', {
-                method,
-                hasMarker: text.includes(MARKER),
-                markerCount: text.split(MARKER).length - 1,
-                // First system-ish chunk, trimmed, to see ordering.
-                head: text.slice(0, 400),
-              });
-            } catch (e) {}
-            return original.call(this, opts);
-          };
-        }
-      } catch (e) {
-        log('wrap-error.json', { message: String(e) });
-      }
-    });
+    // NOTE: ctx.aisdk.language does not exist in the released 2.0.17 build
+    // (Die: ctx.aisdk.language is not a function). End-to-end confirmation of
+    // the system prompt therefore comes from `opencode debug agents` reading
+    // the materialized draft, not from wrapping the provider call.
 
     await ctx.skill.transform((skills) => {
       const dir = path.resolve(__dirname, '../../skills');
