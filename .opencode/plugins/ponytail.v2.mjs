@@ -1,68 +1,84 @@
-// ponytail — OpenCode v2 plugin entry.
-//
-// v2 loads this instead of ./ponytail.mjs: it wants a default export of
-// { id, setup } and rejects v1's hook factory with PluginModule.LoadError.
-// package.json points exports["./server"] here; "." still serves the v1 file,
-// so v1 loaders see no change.
-//
-// Plugin.define is an identity function, so the shape is hand-rolled rather
-// than importing @opencode-ai/plugin.
+// PROBE ONLY — deleted before any real commit.
+// Answers two open questions against a live opencode 2.x server:
+//   1. Does the injected ruleset actually reach the model's system prompt?
+//   2. Does our transform run BEFORE or AFTER the built-in agent plugin's
+//      unconditional `item.system = ...` assignments (explore/compaction/
+//      title/summary)? If after, our injection survives on all of them.
 
-import { createRequire } from 'module';
 import fs from 'fs';
-import os from 'os';
+import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// The shared instruction builder is CommonJS; bridge to it from this ES module.
 const require = createRequire(import.meta.url);
 const { getPonytailInstructions } = require('../../hooks/ponytail-instructions');
-const { getDefaultMode, normalizePersistedMode } = require('../../hooks/ponytail-config');
 
-// OpenCode has no flag-file convention of its own; keep mode beside its config.
-const statePath = path.join(
-  process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'),
-  'opencode',
-  '.ponytail-active',
-);
-
-function readMode() {
+const OUT = '/tmp/opencode/probe';
+const log = (name, data) => {
   try {
-    return normalizePersistedMode(fs.readFileSync(statePath, 'utf8').trim()) || getDefaultMode();
-  } catch (e) {
-    return getDefaultMode();
-  }
-}
-
-// A domain reload reruns every transform, so the marker keeps appends from
-// stacking duplicates.
-const MARKER = 'PONYTAIL MODE ACTIVE';
+    fs.mkdirSync(OUT, { recursive: true });
+    fs.appendFileSync(path.join(OUT, name), JSON.stringify(data, null, 2) + '\n---\n');
+  } catch (e) {}
+};
 
 export default {
   id: 'ponytail',
   setup: async (ctx) => {
-    const mode = readMode();
+    const mode = 'full';
+    const instructions = getPonytailInstructions(mode);
+    const MARKER = 'PONYTAIL MODE ACTIVE';
 
-    // Append the ruleset to every agent prompt. ponytail: v2 has no per-turn
-    // hook, so the mode is frozen at setup and a switch needs a reload — same
-    // flag file as v1, one step later.
     await ctx.agent.transform((agents) => {
-      if (mode === 'off') return;
-      const instructions = getPonytailInstructions(mode);
+      // What does the draft look like the moment OUR transform runs? If the
+      // built-ins already ran, explore/title/etc. are present with a system.
+      const before = agents.list().map((a) => ({ id: a.id, mode: a.mode, hidden: a.hidden, hasSystem: !!a.system }));
+      log('transform-order.json', { before });
+
       for (const agent of agents.list()) {
         agents.update(agent.id, (a) => {
           if (a.system && a.system.includes(MARKER)) return;
           a.system = a.system ? a.system + '\n\n' + instructions : instructions;
         });
       }
+
+      const after = agents.list().map((a) => ({ id: a.id, injected: !!(a.system && a.system.includes(MARKER)) }));
+      log('transform-after.json', { after });
+    });
+
+    // Capture the real system prompt by wrapping the provider's model call.
+    await ctx.aisdk.language((event) => {
+      const model = event.language;
+      if (!model || model.__ponytailProbe) return;
+      try {
+        model.__ponytailProbe = true;
+        for (const method of ['doStream', 'doGenerate']) {
+          const original = model[method];
+          if (typeof original !== 'function') continue;
+          model[method] = function (opts) {
+            try {
+              const prompt = opts && opts.prompt;
+              const text = JSON.stringify(prompt);
+              log('system-prompt.json', {
+                method,
+                hasMarker: text.includes(MARKER),
+                markerCount: text.split(MARKER).length - 1,
+                // First system-ish chunk, trimmed, to see ordering.
+                head: text.slice(0, 400),
+              });
+            } catch (e) {}
+            return original.call(this, opts);
+          };
+        }
+      } catch (e) {
+        log('wrap-error.json', { message: String(e) });
+      }
     });
 
     await ctx.skill.transform((skills) => {
       const dir = path.resolve(__dirname, '../../skills');
-      const known = skills.list().some((s) => s.type === 'directory' && s.path === dir);
-      if (!known) skills.source({ type: 'directory', path: dir });
+      skills.source({ type: 'directory', path: dir });
+      log('skills.json', { dir, listed: skills.list().length });
     });
   },
 };
