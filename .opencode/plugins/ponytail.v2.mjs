@@ -14,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const { getPonytailInstructions } = require('../../hooks/ponytail-instructions');
 
-const OUT = '/tmp/opencode/probe';
+const OUT = '/home/chris/.cache/ponytail-probe';
 const log = (name, data) => {
   try {
     fs.mkdirSync(OUT, { recursive: true });
@@ -25,10 +25,12 @@ const log = (name, data) => {
 export default {
   id: 'ponytail',
   setup: async (ctx) => {
+    fs.writeFileSync('/home/chris/.cache/ponytail-probe-setup.txt', 'setup ran ' + new Date().toISOString() + '\n');
     const mode = 'full';
     const instructions = getPonytailInstructions(mode);
     const MARKER = 'PONYTAIL MODE ACTIVE';
 
+    fs.writeFileSync('/home/chris/.cache/ponytail-probe-reg.txt', 'registering\n');
     await ctx.agent.transform((agents) => {
       // What does the draft look like the moment OUR transform runs? If the
       // built-ins already ran, explore/title/etc. are present with a system.
@@ -42,6 +44,7 @@ export default {
         });
       }
 
+      fs.writeFileSync('/home/chris/.cache/ponytail-probe-ran.txt', 'transform ran ' + new Date().toISOString() + '\n');
       const after = agents.list().map((a) => ({ id: a.id, injected: !!(a.system && a.system.includes(MARKER)) }));
       log('transform-after.json', { after });
     });
@@ -53,8 +56,25 @@ export default {
 
     await ctx.skill.transform((skills) => {
       const dir = path.resolve(__dirname, '../../skills');
-      skills.source({ type: 'directory', path: dir });
-      log('skills.json', { dir, listed: skills.list().length });
+      const md = path.join(dir, 'ponytail', 'SKILL.md');
+      const raw = fs.readFileSync(md, 'utf8');
+      const m = /^---\n([\s\S]*?)\n---\n?/.exec(raw);
+      const body = raw.slice(m[0].length);
+      const fm = {};
+      for (const line of m[1].split('\n')) { const kv = /^([a-z-]+):\s*(.*)$/.exec(line); if (kv) fm[kv[1]] = kv[2].trim(); }
+      const results = { fmKeys: Object.keys(fm), bodyLen: body.length };
+      const attempts = {
+        'id+name+path': { id: 'ponytail', name: 'ponytail', path: md },
+        'full': { id: 'ponytail', name: 'ponytail', description: fm.description, path: md, content: body },
+      };
+      for (const [name, arg] of Object.entries(attempts)) {
+        try { skills.add(arg); results[name] = 'OK'; }
+        catch (e) { results[name] = String(e).slice(0, 160); }
+      }
+      const found = skills.list().find((x) => x.id === 'ponytail');
+      results.foundContent = found ? String(found.content).slice(0, 80) : null;
+      results.foundMarker = found ? String(found.content).includes('PONYTAIL MODE ACTIVE') : null;
+      log('skill-shapes.json', results);
     });
   },
 };
