@@ -193,7 +193,9 @@ Run from a checkout instead (the plugin reuses `hooks/` and `skills/`):
 
 Injects the ruleset every turn at the active level; adds the `/ponytail` commands (see [Commands](#commands)). OpenCode also auto-loads this repo's `AGENTS.md`, so the rules hold even without the plugin. The plugin adds the `lite/full/ultra/off` levels.
 
-On OpenCode v2 (anomalyco/opencode ≥ 2.x) the same install line resolves `exports["./server"]` (`.opencode/plugins/ponytail.v2.mjs`), which bakes the active level's ruleset into agent prompts at setup and registers `./skills`; v1 loaders keep using the default entry untouched. v2 has no per-turn hook, so switching levels there applies on reload/restart rather than the next message.
+On OpenCode v2 (anomalyco/opencode ≥ 2.x) the same install line resolves `exports["./server"]` (`.opencode/plugins/ponytail.v2.mjs`), which bakes the active level's ruleset into every agent prompt at startup and registers the packaged skills (which is where v2 gets its `/ponytail` commands). v1 loaders keep using the default entry, unchanged.
+
+**v2 has no per-turn hook and no callback when a command runs**, so the level is frozen for the life of the process. `/ponytail <level>` has no way to persist a switch there, and the level does not change on reload either. To change it, edit `~/.config/opencode/.ponytail-active` (`lite`, `full`, `ultra`, or `off`) and restart OpenCode. Until then v2 stays at whatever the file said at startup.
 
 The `./` path resolves against your project's `opencode.json`; to share one checkout across projects, point it at the absolute path of the `.mjs` instead (it finds its `hooks/` and `skills/` relative to its own file).
 

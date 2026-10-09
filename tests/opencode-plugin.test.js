@@ -193,12 +193,14 @@ test('v2 skill descriptions fold multi-line frontmatter into one string', async 
 test('v2 does not stack duplicates when the plugin is registered twice', async () => {
   try { fs.unlinkSync(statePath); } catch (e) {}
   const agents = [{ id: 'a' }];
-  const { ctx, replayAgents } = mockCtx(agents);
+  const { ctx, replayAgents, added } = mockCtx(agents);
   await v2Plugin.setup(ctx);
+  const firstSkills = added.length;
   await v2Plugin.setup(ctx);
   replayAgents();
   replayAgents();
   assert.equal(agents[0].system.match(/PONYTAIL MODE ACTIVE/g).length, 1);
+  assert.equal(added.length, firstSkills, 'a second registration must not duplicate skills');
 });
 
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));

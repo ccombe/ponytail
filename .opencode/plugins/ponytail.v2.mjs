@@ -87,6 +87,7 @@ export default {
           continue;
         }
         if (!parsed) continue;
+        if (skills.get(name)) continue;
         skills.add({ id: name, name, description: parsed.description, path: file, content: parsed.body });
       }
     });
